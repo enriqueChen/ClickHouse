@@ -607,13 +607,13 @@ std::vector<std::unordered_set<std::optional<size_t>>> getActionsDependents(cons
 
             case ExpressionAction::PROJECT:
                 current_dependents.clear();
-                for (const auto & proj : actions[i].projection)
-                    current_dependents[proj.first].emplace();
+                for (const auto & proj : actions[i].projection_names)
+                    current_dependents[proj].emplace();
                 break;
 
             case ExpressionAction::ADD_ALIASES:
-                for (const auto & proj : actions[i].projection)
-                    current_dependents[proj.first].emplace();
+                for (const auto & proj : actions[i].projection_names)
+                    current_dependents[proj].emplace();
                 break;
 
             case ExpressionAction::ADD_COLUMN:
