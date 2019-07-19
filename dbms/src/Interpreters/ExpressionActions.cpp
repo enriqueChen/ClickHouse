@@ -1019,8 +1019,9 @@ void ExpressionActions::execute(Block & block, bool dry_run) const
 
 void ExpressionActions::execute(const Block & header, Columns & columns, size_t & num_rows, Cache & cache, bool dry_run) const
 {
-    if (cache.index.empty())
+    if (!cache.is_initialized)
     {
+        cache.is_initialized = true;
         cache.headers.clear();
         cache.headers.reserve(actions.size());
 

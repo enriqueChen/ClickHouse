@@ -251,6 +251,8 @@ public:
         Blocks headers;
         /// Index for the first execution step.
         ColumnNumbers index;
+
+        bool is_initialized = false;
     };
 
     /// Execute the expression on the columns with specified header.
