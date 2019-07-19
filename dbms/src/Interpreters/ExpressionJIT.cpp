@@ -703,8 +703,12 @@ void compileFunctions(ExpressionActions::Actions & actions, const Names & output
             }
 
             actions[i].function_base = fn;
-            actions[i].argument_names = fn->getArgumentNames();
             actions[i].is_function_compiled = true;
+
+            auto argument_names = fn->getArgumentNames();
+            actions[i].argument_names.reserve(argument_names.size());
+            for (auto & name : argument_names)
+                actions[i].argument_names.emplace_back(name);
 
             continue;
         }
