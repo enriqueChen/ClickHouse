@@ -185,7 +185,7 @@ ExpressionAction ExpressionAction::arrayJoin(const NameSet & array_joined_column
     a.type = ARRAY_JOIN;
 
     for (auto & column : array_joined_columns)
-        a.array_joined_columns.emplace(column);
+        a.array_joined_columns[column] = INDEX_NOT_FOUND;
 
     a.array_join_is_left = array_join_is_left;
     a.unaligned_array_join = context.getSettingsRef().enable_unaligned_array_join;
