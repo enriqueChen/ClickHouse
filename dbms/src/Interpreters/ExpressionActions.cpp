@@ -399,10 +399,28 @@ void ExpressionAction::execute(
 
     size_t input_rows_count = num_rows;
 
-    auto getIndex = [&index](const NameWithPosition & name) { return index[name.position]; };
-    auto getIndexAt = [&index](const NamesWithPosition & names, size_t i) { return index[names[i].position]; };
+    auto checkPosition = [](const NameWithPosition & name)
+    {
+        if (name.position == INDEX_NOT_FOUND)
+            throw Exception("Position was not set for " + name.name + " column", ErrorCodes::LOGICAL_ERROR);
+    };
 
-    auto setIndex = [&index](const NameWithPosition & name, size_t value) { index[name.position] = value; };
+    auto getIndex = [&](const NameWithPosition & name)
+    {
+        checkPosition(name);
+        return index[name.position];
+    };
+    auto getIndexAt = [&](const NamesWithPosition & names, size_t i)
+    {
+        checkPosition(names[i]);
+        return index[names[i].position];
+    };
+
+    auto setIndex = [&](const NameWithPosition & name, size_t value)
+    {
+        index[name.position] = value;
+        checkPosition(name);
+    };
 
     auto getColumn = [&](size_t pos) -> ColumnPtr &
     {
@@ -623,9 +641,15 @@ void ExpressionAction::execute(
                     new_columns.emplace_back(columns[pos]);
 
                 if (alias.empty())
+                {
+                    checkPosition(projection_names[i]);
                     new_index[projection_names[i].position] = i;
+                }
                 else
+                {
+                    checkPosition(projection_aliases[i]);
                     new_index[projection_aliases[i].position] = i;
+                }
             }
 
             index.swap(new_index);
