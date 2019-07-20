@@ -75,6 +75,7 @@ public:
     Type type{};
 
     using EnumeratedColumns = std::unordered_map<std::string, size_t>;
+
     static constexpr auto INDEX_NOT_FOUND = NameWithPosition::INDEX_NOT_FOUND;
 
     /// For ADD/REMOVE/COPY_COLUMN.
@@ -104,8 +105,8 @@ public:
     NamesWithPosition argument_names;
     bool is_function_compiled = false;
 
-    /// For ARRAY_JOIN
-    NamesWithPositionSet array_joined_columns;
+    /// For ARRAY_JOIN. Maps name to position.
+    std::unordered_map<std::string, size_t> array_joined_columns;
     bool array_join_is_left = false;
     bool unaligned_array_join = false;
 

@@ -44,14 +44,14 @@ Names ExpressionAction::getNeededColumns() const
         res.emplace_back(name_with_position);
 
     for (const auto & name_with_position : array_joined_columns)
-        res.emplace_back(name_with_position);
+        res.emplace_back(name_with_position.first);
 
     res.insert(res.end(), join_key_names_left.begin(), join_key_names_left.end());
 
     for (const auto & name_with_position : projection_names)
         res.emplace_back(name_with_position);
 
-    if (!source_name.empty())
+    if (!source_name.name.empty())
         res.push_back(source_name);
 
     return res;
@@ -60,37 +60,30 @@ Names ExpressionAction::getNeededColumns() const
 
 void ExpressionAction::enumerateColumns(EnumeratedColumns & enumerated_columns)
 {
-    auto add = [&](NameWithPosition & name_with_position)
+    auto add = [&](const std::string & name, size_t & position)
     {
-        if (name_with_position.empty())
+        if (name.empty())
             return;
 
         size_t number = enumerated_columns.size();
-        auto it = enumerated_columns.emplace(name_with_position, number);
-        name_with_position.position = it.first->second;
+        auto it = enumerated_columns.emplace(name, number);
+        position = it.first->second;
     };
 
     for (auto & name_with_position : argument_names)
-        add(name_with_position);
+        add(name_with_position.name, name_with_position.position);
 
-    NamesWithPositionSet new_array_joined_columns;
-    while (!array_joined_columns.empty())
-    {
-        auto name_with_position = *array_joined_columns.begin();
-        array_joined_columns.erase(array_joined_columns.begin());
-        add(name_with_position);
-        new_array_joined_columns.insert(std::move(name_with_position));
-    }
-    array_joined_columns.swap(new_array_joined_columns);
+    for (auto & name_with_position : array_joined_columns)
+        add(name_with_position.first, name_with_position.second);
 
     for (auto & name_with_position : projection_names)
-        add(name_with_position);
+        add(name_with_position.name, name_with_position.position);
 
     for (auto & name_with_position : projection_aliases)
-        add(name_with_position);
+        add(name_with_position.name, name_with_position.position);
 
-    add(source_name);
-    add(result_name);
+    add(source_name.name, source_name.position);
+    add(result_name.name, result_name.position);
 }
 
 
@@ -290,7 +283,7 @@ void ExpressionAction::prepare(Block & sample_block, const Settings & settings)
         {
             for (const auto & name : array_joined_columns)
             {
-                ColumnWithTypeAndName & current = sample_block.getByName(name);
+                ColumnWithTypeAndName & current = sample_block.getByName(name.first);
                 const auto * array_type = typeid_cast<const DataTypeArray *>(&*current.type);
                 if (!array_type)
                     throw Exception("ARRAY JOIN requires array argument", ErrorCodes::TYPE_MISMATCH);
@@ -487,7 +480,7 @@ void ExpressionAction::execute(
 
                 for (const auto & name : array_joined_columns)
                 {
-                    auto src_index = getIndex(name);
+                    auto src_index = index[name.second];
                     auto & src_col = block.getByPosition(src_index);
 
                     if constexpr (!execute_on_block)
@@ -509,7 +502,7 @@ void ExpressionAction::execute(
 
                 for (const auto & name : array_joined_columns)
                 {
-                    auto src_index = getIndex(name);
+                    auto src_index = index[name.second];
                     auto & src_col = block.getByPosition(src_index);
 
                     if constexpr (!execute_on_block)
@@ -528,7 +521,7 @@ void ExpressionAction::execute(
             {
                 for (const auto & name : array_joined_columns)
                 {
-                    auto src_index = getIndex(name);
+                    auto src_index = index[name.second];
                     auto & src_col = block.getByPosition(src_index);
 
                     if constexpr (!execute_on_block)
@@ -543,10 +536,10 @@ void ExpressionAction::execute(
                 }
             }
 
-            ColumnPtr any_array_ptr = getColumn(getIndex(*array_joined_columns.begin()))->convertToFullColumnIfConst();
+            ColumnPtr any_array_ptr = getColumn(index[array_joined_columns.begin()->second])->convertToFullColumnIfConst();
             const auto * any_array = typeid_cast<const ColumnArray *>(&*any_array_ptr);
             if (!any_array)
-                throw Exception("ARRAY JOIN of not array: " + *array_joined_columns.begin(), ErrorCodes::TYPE_MISMATCH);
+                throw Exception("ARRAY JOIN of not array: " + array_joined_columns.begin()->first, ErrorCodes::TYPE_MISMATCH);
 
             size_t num_columns = block.columns();
             for (size_t i = 0; i < num_columns; ++i)
@@ -828,7 +821,7 @@ std::string ExpressionAction::toString() const
             {
                 if (it != array_joined_columns.begin())
                     ss << ", ";
-                ss << *it;
+                ss << it->first;
             }
             break;
 
@@ -850,7 +843,7 @@ std::string ExpressionAction::toString() const
                 if (i)
                     ss << ", ";
                 ss << projection_names[i];
-                if (!projection_aliases[i].empty() && projection_aliases[i] != projection_names[i])
+                if (!projection_aliases[i].name.empty() && projection_aliases[i].name != projection_names[i].name)
                     ss << " AS " << projection_aliases[i];
             }
             break;
@@ -920,7 +913,7 @@ void ExpressionActions::add(const ExpressionAction & action)
 
 void ExpressionActions::addImpl(ExpressionAction action, Names & new_names)
 {
-    if (!action.result_name.empty())
+    if (!action.result_name.name.empty())
         new_names.push_back(action.result_name);
     new_names.insert(new_names.end(), action.array_joined_columns.begin(), action.array_joined_columns.end());
 
@@ -989,14 +982,14 @@ bool ExpressionActions::popUnusedArrayJoin(const Names & required_columns, Expre
     if (actions.empty() || actions.back().type != ExpressionAction::ARRAY_JOIN)
         return false;
     NameSet required_set(required_columns.begin(), required_columns.end());
-    for (const std::string & name : actions.back().array_joined_columns)
+    for (const auto & name : actions.back().array_joined_columns)
     {
-        if (required_set.count(name))
+        if (required_set.count(name.first))
             return false;
     }
-    for (const std::string & name : actions.back().array_joined_columns)
+    for (const auto & name : actions.back().array_joined_columns)
     {
-        DataTypePtr & type = sample_block.getByName(name).type;
+        DataTypePtr & type = sample_block.getByName(name.first).type;
         type = std::make_shared<DataTypeArray>(type);
     }
     out_action = actions.back();
@@ -1176,20 +1169,20 @@ void ExpressionActions::finalize(const Names & output_columns)
             /// We will not remove all the columns so as not to lose the number of rows.
             for (auto it = action.array_joined_columns.begin(); it != action.array_joined_columns.end();)
             {
-                bool need = needed_columns.count(*it);
+                bool need = needed_columns.count(it->first);
                 if (!need && action.array_joined_columns.size() > 1)
                 {
                     action.array_joined_columns.erase(it++);
                 }
                 else
                 {
-                    needed_columns.insert(*it);
-                    unmodified_columns.erase(*it);
+                    needed_columns.insert(it->first);
+                    unmodified_columns.erase(it->first);
 
                     /// If no ARRAY JOIN results are used, forcibly leave an arbitrary column at the output,
                     ///  so you do not lose the number of rows.
                     if (!need)
-                        final_columns.insert(*it);
+                        final_columns.insert(it->first);
 
                     ++it;
                 }
@@ -1279,7 +1272,7 @@ void ExpressionActions::finalize(const Names & output_columns)
 
     for (const auto & action : actions)
     {
-        if (!action.source_name.empty())
+        if (!action.source_name.name.empty())
             ++columns_refcount[action.source_name];
 
         for (const auto & name : action.argument_names)
@@ -1308,7 +1301,7 @@ void ExpressionActions::finalize(const Names & output_columns)
             }
         };
 
-        if (!action.source_name.empty())
+        if (!action.source_name.name.empty())
             process(action.source_name);
 
         for (const auto & name : action.argument_names)
@@ -1398,7 +1391,7 @@ void ExpressionActions::optimizeArrayJoin()
             if (first_array_join == NONE)
                 first_array_join = i;
 
-            if (!actions[i].result_name.empty())
+            if (!actions[i].result_name.name.empty())
                 array_joined_columns.insert(actions[i].result_name);
             array_joined_columns.insert(actions[i].array_joined_columns.begin(), actions[i].array_joined_columns.end());
 
@@ -1535,8 +1528,8 @@ bool ExpressionAction::operator==(const ExpressionAction & other) const
             return false;
     }
 
-    return source_name == other.source_name
-        && result_name == other.result_name
+    return source_name.name == other.source_name.name
+        && result_name.name == other.result_name.name
         && argument_names == other.argument_names
         && array_joined_columns == other.array_joined_columns
         && array_join_is_left == other.array_join_is_left
