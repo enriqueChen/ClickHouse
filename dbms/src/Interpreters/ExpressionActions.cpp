@@ -1533,8 +1533,8 @@ bool ExpressionAction::operator==(const ExpressionAction & other) const
             return false;
     }
 
-    return source_name.name == other.source_name.name
-        && result_name.name == other.result_name.name
+    return source_name == other.source_name
+        && result_name == other.result_name
         && argument_names == other.argument_names
         && array_joined_columns == other.array_joined_columns
         && array_join_is_left == other.array_join_is_left

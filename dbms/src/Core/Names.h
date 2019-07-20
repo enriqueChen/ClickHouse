@@ -35,6 +35,8 @@ struct NameWithPosition
     NameWithPosition & operator=(const std::string & str) { name = str; return *this; }
     NameWithPosition & operator=(std::string && str) { name = std::move(str); return *this; }
 
+    bool operator==(const NameWithPosition & other) const { return name == other.name; }
+
     operator const std::string &() const { return name; }
 };
 
