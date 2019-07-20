@@ -955,7 +955,10 @@ void ExpressionActions::prependArrayJoin(const ExpressionAction & action, const 
     if (action.type != ExpressionAction::ARRAY_JOIN)
         throw Exception("ARRAY_JOIN action expected", ErrorCodes::LOGICAL_ERROR);
 
-    NameSet array_join_set(action.array_joined_columns.begin(), action.array_joined_columns.end());
+    NameSet array_join_set;
+    for (auto & name : action.array_joined_columns)
+        array_join_set.insert(name.first);
+
     for (auto & it : input_columns)
     {
         if (array_join_set.count(it.name))
