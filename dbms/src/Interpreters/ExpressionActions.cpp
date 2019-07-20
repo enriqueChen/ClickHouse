@@ -1396,7 +1396,9 @@ void ExpressionActions::optimizeArrayJoin()
 
             if (!actions[i].result_name.name.empty())
                 array_joined_columns.insert(actions[i].result_name);
-            array_joined_columns.insert(actions[i].array_joined_columns.begin(), actions[i].array_joined_columns.end());
+
+            for (auto & name : actions[i].array_joined_columns)
+                array_joined_columns.insert(name.first);
 
             array_join_dependencies.insert(needed.begin(), needed.end());
         }
