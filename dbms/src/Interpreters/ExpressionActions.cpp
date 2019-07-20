@@ -915,7 +915,9 @@ void ExpressionActions::addImpl(ExpressionAction action, Names & new_names)
 {
     if (!action.result_name.name.empty())
         new_names.push_back(action.result_name);
-    new_names.insert(new_names.end(), action.array_joined_columns.begin(), action.array_joined_columns.end());
+
+    for (auto & name : action.array_joined_columns)
+        new_names.push_back(name.first);
 
     /// Compiled functions are custom functions and them don't need building
     if (action.type == ExpressionAction::APPLY_FUNCTION && !action.is_function_compiled)
