@@ -45,6 +45,4 @@ using NamesWithPosition = std::vector<NameWithPosition>;
 inline std::string operator+(const std::string & lhs, const NameWithPosition & rhs) { return lhs + rhs.name; }
 inline std::string operator+(const NameWithPosition & lhs, const std::string & rhs) { return lhs.name + rhs; }
 
-inline std::ostream & operator<<(const std::ostream & out, const NameWithPosition & val) { return out << val.name; }
-
 }

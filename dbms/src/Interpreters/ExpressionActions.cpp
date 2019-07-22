@@ -811,30 +811,30 @@ std::string ExpressionAction::toString() const
     switch (type)
     {
         case ADD_COLUMN:
-            ss << "ADD " << result_name << " "
+            ss << "ADD " << result_name.name << " "
                 << (result_type ? result_type->getName() : "(no type)") << " "
                 << (added_column ? added_column->getName() : "(no column)");
             break;
 
         case REMOVE_COLUMN:
-            ss << "REMOVE " << source_name;
+            ss << "REMOVE " << source_name.name;
             break;
 
         case COPY_COLUMN:
-            ss << "COPY " << result_name << " = " << source_name;
+            ss << "COPY " << result_name.name << " = " << source_name.name;
             if (can_replace)
                 ss << " (can replace)";
             break;
 
         case APPLY_FUNCTION:
-            ss << "FUNCTION " << result_name << " " << (is_function_compiled ? "[compiled] " : "")
+            ss << "FUNCTION " << result_name.name << " " << (is_function_compiled ? "[compiled] " : "")
                 << (result_type ? result_type->getName() : "(no type)") << " = "
                 << (function_base ? function_base->getName() : "(no function)") << "(";
             for (size_t i = 0; i < argument_names.size(); ++i)
             {
                 if (i)
                     ss << ", ";
-                ss << argument_names[i];
+                ss << argument_names[i].name;
             }
             ss << ")";
             break;
@@ -866,9 +866,9 @@ std::string ExpressionAction::toString() const
             {
                 if (i)
                     ss << ", ";
-                ss << projection_names[i];
+                ss << projection_names[i].name;
                 if (!projection_aliases[i].name.empty() && projection_aliases[i].name != projection_names[i].name)
-                    ss << " AS " << projection_aliases[i];
+                    ss << " AS " << projection_aliases[i].name;
             }
             break;
     }
