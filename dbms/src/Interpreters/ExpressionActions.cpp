@@ -678,7 +678,11 @@ void ExpressionAction::execute(
                 ++num_columns;
 
                 if constexpr (execute_on_block)
-                    block.insert(block.getByPosition(pos));
+                {
+                    ColumnWithTypeAndName column = block.getByPosition(pos);
+                    column.name = alias;
+                    block.insert(std::move(column));
+                }
                 else
                     columns.emplace_back(columns[pos]);
             }
