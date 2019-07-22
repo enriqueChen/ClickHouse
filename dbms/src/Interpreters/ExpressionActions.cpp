@@ -444,6 +444,12 @@ void ExpressionAction::execute(
     {
         case APPLY_FUNCTION:
         {
+            if constexpr (!execute_on_block)
+            {
+                for (size_t i = 0; i < columns.size(); ++i)
+                    block.getByPosition(i).column.swap(columns[i]);
+            }
+
             ColumnNumbers arguments(argument_names.size());
             for (size_t i = 0; i < argument_names.size(); ++i)
             {
@@ -453,9 +459,6 @@ void ExpressionAction::execute(
                 if (pos == INDEX_NOT_FOUND)
                     throw Exception("Not found column: '" + argument_names[i] + "'",
                                     ErrorCodes::NOT_FOUND_COLUMN_IN_BLOCK);
-
-                if constexpr (!execute_on_block)
-                    block.getByPosition(pos).column.swap(columns[pos]);
             }
 
             size_t num_columns_without_result = block.columns();
@@ -470,11 +473,11 @@ void ExpressionAction::execute(
 
             if constexpr (!execute_on_block)
             {
+                for (size_t i = 0; i < columns.size(); ++i)
+                    block.getByPosition(i).column.swap(columns[i]);
+
                 columns.emplace_back(std::move(block.getByPosition(num_columns_without_result).column));
                 block.erase(num_columns_without_result);
-
-                for (auto & arg : arguments)
-                    block.getByPosition(arg).column.swap(columns[arg]);
             }
 
             break;
