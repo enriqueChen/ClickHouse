@@ -485,7 +485,7 @@ LLVMFunction::LLVMFunction(const ExpressionActions::Actions & actions, const Blo
             }
             args.push_back(inserted.first->second);
         }
-        subexpressions[action.result_name] = subexpression(*action.function_base, std::move(args));
+        subexpressions[action.result_name.name] = subexpression(*action.function_base, std::move(args));
         originals.push_back(action.function_base);
     }
     compileFunctionToLLVMByteCode(context, *this);
