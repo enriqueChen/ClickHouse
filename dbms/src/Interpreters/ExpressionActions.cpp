@@ -670,7 +670,7 @@ void ExpressionAction::execute(
             {
                 const std::string & alias = projection_aliases[i];
 
-                if (alias.empty())
+                if (alias.empty() || getIndex(projection_aliases[i]) != INDEX_NOT_FOUND)
                     continue;
 
                 auto pos = getIndex(projection_names[i]);
