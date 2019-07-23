@@ -598,8 +598,12 @@ void ExpressionAction::execute(
 
         case JOIN:
         {
+            Block header;
+
             if constexpr (!execute_on_block)
             {
+                header = block;
+
                 for (size_t i = 0; i < columns.size(); ++i)
                     block.getByPosition(i).column.swap(columns[i]);
             }
@@ -615,6 +619,8 @@ void ExpressionAction::execute(
 
                 for (size_t i = 0; i < columns.size(); ++i)
                     block.getByPosition(i).column.swap(columns[i]);
+
+                block.swap(header);
             }
 
             break;
