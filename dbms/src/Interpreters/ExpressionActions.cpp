@@ -606,6 +606,9 @@ void ExpressionAction::execute(
 
             join->joinBlock(block, join_key_names_left, columns_added_by_join);
 
+            num_rows = block.rows();
+            index = makeIndex(block, enumerated_columns);
+
             if constexpr (!execute_on_block)
             {
                 columns.resize(block.columns());
@@ -613,9 +616,6 @@ void ExpressionAction::execute(
                 for (size_t i = 0; i < columns.size(); ++i)
                     block.getByPosition(i).column.swap(columns[i]);
             }
-
-            num_rows = block.rows();
-            index = makeIndex(block, enumerated_columns);
 
             break;
         }
