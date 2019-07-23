@@ -1052,7 +1052,8 @@ void ExpressionActions::execute(const Block & header, Columns & columns, size_t 
     {
         cache.is_initialized = true;
         cache.headers.clear();
-        cache.headers.reserve(actions.size());
+        cache.headers.reserve(actions.size() + 1);
+        cache.headers.emplace_back(header);
 
         auto index = ExpressionAction::makeIndex(header, enumerated_columns);
         auto block = header.cloneWithColumns(columns);
@@ -1062,9 +1063,9 @@ void ExpressionActions::execute(const Block & header, Columns & columns, size_t 
 
         for (auto & action : actions)
         {
-            cache.headers.emplace_back(block.cloneEmpty());
             action.execute<true>(block, columns, num_rows, index, enumerated_columns, dry_run);
             checkLimits<true>(block, columns);
+            cache.headers.emplace_back(block.cloneEmpty());
         }
 
         columns = block.getColumns();
@@ -1076,7 +1077,7 @@ void ExpressionActions::execute(const Block & header, Columns & columns, size_t 
         for (size_t i = 0, size = actions.size(); i < size; ++i)
         {
             actions[i].execute<false>(cache.headers[i], columns, num_rows, index, enumerated_columns, dry_run);
-            checkLimits<false>(cache.headers[i], columns);
+            checkLimits<false>(cache.headers[i + 1], columns);
         }
     }
 }
