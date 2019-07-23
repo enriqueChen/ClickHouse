@@ -374,11 +374,185 @@ void ExpressionAction::prepare(Block & sample_block, const Settings & settings)
     }
 }
 
+namespace
+{
 
-template <bool execute_on_block>
+class ActionsOnBlock
+{
+public:
+    explicit ActionsOnBlock(Block & block_) : block(block_) {}
+
+    const Block & getHeader() const { return block; }
+
+    size_t executeFunction(
+        const PreparedFunctionPtr & function,
+        ColumnNumbers & arguments,
+        bool dry_run,
+        size_t num_rows,
+        const NameWithPosition & result_name,
+        const DataTypePtr & result_type)
+    {
+        size_t result_position = block.columns();
+        block.insert({ nullptr, result_type, result_name});
+        function->execute(block, arguments, result_position, num_rows, dry_run);
+        return result_position;
+    }
+
+    size_t executeJoin(
+        const Join & join,
+        const Names & join_key_names_left,
+        const NamesAndTypesList & columns_added_by_join,
+        bool on_totals)
+    {
+        if (on_totals)
+            join.joinTotals(block);
+        else
+            join.joinBlock(block, join_key_names_left, columns_added_by_join);
+
+        return block.rows();
+    }
+
+    ColumnWithTypeAndName getByPosition(size_t position) const { return block.getByPosition(position); }
+    const DataTypePtr & getType(size_t position) { return block.getByPosition(position).type; }
+    void setType(const DataTypePtr & type, size_t position) { block.getByPosition(position).type = type; }
+
+    ColumnPtr & getColumn(size_t position) { return block.getByPosition(position).column; }
+
+    size_t getNumColumns() const { return block.columns(); }
+
+    Block detach()
+    {
+        Block empty;
+        empty.swap(block);
+        return empty;
+    }
+
+    Block & getData() { return block; }
+
+    void insertFrom(Block & from, size_t position, const std::string & alias)
+    {
+        auto column = std::move(from.getByPosition(position));
+        if (!alias.empty())
+            column.name = alias;
+
+        block.insert(std::move(column));
+    }
+
+    void removeColumn(size_t pos) { block.erase(pos); }
+    void insertColumn(const ColumnPtr & column, const DataTypePtr & type, const String & name)
+    {
+        block.insert({column, type, name});
+    }
+
+    const Block & getResultHeader() const { return block; }
+
+private:
+    Block & block;
+};
+
+
+class ActionsOnColumns
+{
+public:
+    ActionsOnColumns(Block & header_, Block & result_header_, Columns & columns_)
+        : header(header_), result_header(result_header_), columns(columns_) {}
+
+    const Block & getHeader() const { return header; }
+
+    size_t executeFunction(
+            const PreparedFunctionPtr & function,
+            ColumnNumbers & arguments,
+            bool dry_run,
+            size_t num_rows,
+            const NameWithPosition & result_name,
+            const DataTypePtr & result_type)
+    {
+        for (size_t i = 0; i < columns.size(); ++i)
+            header.getByPosition(i).column.swap(columns[i]);
+
+        size_t result_position = columns.size();
+        header.insert({ nullptr, result_type, result_name});
+        function->execute(header, arguments, result_position, num_rows, dry_run);
+
+        for (size_t i = 0; i < columns.size(); ++i)
+            header.getByPosition(i).column.swap(columns[i]);
+
+        columns.emplace_back(std::move(header.getByPosition(result_position).column));
+        header.erase(result_position);
+
+        return result_position;
+    }
+
+    size_t executeJoin(
+        const Join & join,
+        const Names & join_key_names_left,
+        const NamesAndTypesList & columns_added_by_join,
+        bool on_totals)
+    {
+        auto block = header.cloneWithColumns(columns);
+
+        if (on_totals)
+            join.joinTotals(block);
+        else
+            join.joinBlock(block, join_key_names_left, columns_added_by_join);
+
+        columns.resize(block.columns());
+
+        size_t num_rows = block.rows();
+
+        for (size_t i = 0, size = columns.size(); i < size; ++i)
+            block.getByPosition(i).column.swap(columns[i]);
+
+        return num_rows;
+    }
+
+    ColumnWithTypeAndName getByPosition(size_t position) const
+    {
+        auto res = header.getByPosition(position);
+        res.column = columns[position];
+        return res;
+    }
+
+    const DataTypePtr & getType(size_t position) { return header.getByPosition(position).type; }
+    void setType(const DataTypePtr &, size_t) {}
+
+    ColumnPtr & getColumn(size_t position) { return columns[position]; }
+
+    size_t getNumColumns() const { return header.columns(); }
+
+    Columns detach()
+    {
+        Columns empty;
+        empty.swap(columns);
+        return empty;
+    }
+
+    Columns & getData() { return columns; }
+
+    void insertFrom(Columns & from, size_t position, const std::string &)
+    {
+        columns.emplace_back(std::move(from[position]));
+    }
+
+    void removeColumn(size_t pos) { columns.erase(columns.begin() + pos); }
+    void insertColumn(const ColumnPtr & column, const DataTypePtr &, const String &)
+    {
+        columns.emplace_back(column);
+    }
+
+    const Block & getResultHeader() const { return result_header; }
+
+private:
+    Block & header;
+    Block & result_header;
+    Columns & columns;
+};
+
+}
+
+template <typename Container>
 void ExpressionAction::execute(
-    Block & block,
-    Columns & columns,
+    Container & container,
     size_t & num_rows,
     ColumnNumbers & index,
     const EnumeratedColumns & enumerated_columns,
@@ -397,8 +571,6 @@ void ExpressionAction::execute(
      * Otherwise, columns argument is ignored and block is changed (which also allows to get header for the next step).
      */
 
-    size_t input_rows_count = num_rows;
-
     auto checkPosition = [](const NameWithPosition & name)
     {
         if (name.position == INDEX_NOT_FOUND)
@@ -410,30 +582,10 @@ void ExpressionAction::execute(
         checkPosition(name);
         return index[name.position];
     };
-    auto getIndexAt = [&](const NamesWithPosition & names, size_t i)
-    {
-        checkPosition(names[i]);
-        return index[names[i].position];
-    };
-
-    auto setIndex = [&](const NameWithPosition & name, size_t value)
-    {
-        index[name.position] = value;
-        checkPosition(name);
-    };
-
-    auto getColumn = [&](size_t pos) -> ColumnPtr &
-    {
-        if constexpr (execute_on_block)
-            return block.getByPosition(pos).column;
-        else
-            return columns[pos];
-    };
-
 
     if (type == REMOVE_COLUMN || type == COPY_COLUMN)
         if (getIndex(source_name) == INDEX_NOT_FOUND)
-            throw Exception("Not found column '" + source_name + "'. There are columns: " + block.dumpNames(),
+            throw Exception("Not found column '" + source_name + "'. There are columns: " + container.getHeader().dumpNames(),
                             ErrorCodes::NOT_FOUND_COLUMN_IN_BLOCK);
 
     if (type == ADD_COLUMN || (type == COPY_COLUMN && !can_replace) || type == APPLY_FUNCTION)
@@ -444,16 +596,10 @@ void ExpressionAction::execute(
     {
         case APPLY_FUNCTION:
         {
-            if constexpr (!execute_on_block)
-            {
-                for (size_t i = 0; i < columns.size(); ++i)
-                    block.getByPosition(i).column.swap(columns[i]);
-            }
-
             ColumnNumbers arguments(argument_names.size());
             for (size_t i = 0; i < argument_names.size(); ++i)
             {
-                auto pos = getIndexAt(argument_names, i);
+                auto pos = getIndex(argument_names[i]);
                 arguments[i] = pos;
 
                 if (pos == INDEX_NOT_FOUND)
@@ -461,25 +607,12 @@ void ExpressionAction::execute(
                                     ErrorCodes::NOT_FOUND_COLUMN_IN_BLOCK);
             }
 
-            size_t num_columns_without_result = block.columns();
-            block.insert({ nullptr, result_type, result_name});
-
             ProfileEvents::increment(ProfileEvents::FunctionExecute);
             if (is_function_compiled)
                 ProfileEvents::increment(ProfileEvents::CompiledFunctionExecute);
-            function->execute(block, arguments, num_columns_without_result, input_rows_count, dry_run);
 
-            setIndex(result_name, num_columns_without_result);
-
-            if constexpr (!execute_on_block)
-            {
-                for (size_t i = 0; i < columns.size(); ++i)
-                    block.getByPosition(i).column.swap(columns[i]);
-
-                columns.emplace_back(std::move(block.getByPosition(num_columns_without_result).column));
-                block.erase(num_columns_without_result);
-            }
-
+            auto result = container.executeFunction(function, arguments, dry_run, num_rows, result_name, result_type);
+            index[result_name.position] = result;
             break;
         }
 
@@ -491,51 +624,38 @@ void ExpressionAction::execute(
             if (unaligned_array_join)
             {
                 /// Resize all array joined columns to the longest one, (at least 1 if LEFT ARRAY JOIN), padded with default values.
-                auto rows = block.rows();
                 auto uint64 = std::make_shared<DataTypeUInt64>();
                 ColumnWithTypeAndName column_of_max_length;
                 if (array_join_is_left)
-                    column_of_max_length = ColumnWithTypeAndName(uint64->createColumnConst(rows, 1u), uint64, {});
+                    column_of_max_length = ColumnWithTypeAndName(uint64->createColumnConst(num_rows, 1u), uint64, {});
                 else
-                    column_of_max_length = ColumnWithTypeAndName(uint64->createColumnConst(rows, 0u), uint64, {});
+                    column_of_max_length = ColumnWithTypeAndName(uint64->createColumnConst(num_rows, 0u), uint64, {});
 
                 for (const auto & name : array_joined_columns)
                 {
                     auto src_index = index[name.second];
-                    auto & src_col = block.getByPosition(src_index);
-
-                    if constexpr (!execute_on_block)
-                        src_col.column.swap(columns[src_index]);
+                    auto src_col = container.getByPosition(src_index);
 
                     /// Calculate length(array).
                     Block tmp_block{src_col, {{}, uint64, {}}};
-                    function_length->build({src_col})->execute(tmp_block, {0}, 1, rows);
+                    function_length->build({src_col})->execute(tmp_block, {0}, 1, num_rows);
 
                     /// column_of_max_length = max(length(array), column_of_max_length)
                     Block tmp_block2{
                         column_of_max_length, tmp_block.safeGetByPosition(1), {{}, uint64, {}}};
-                    function_greatest->build({column_of_max_length, tmp_block.safeGetByPosition(1)})->execute(tmp_block2, {0, 1}, 2, rows);
+                    function_greatest->build({column_of_max_length, tmp_block.safeGetByPosition(1)})->execute(tmp_block2, {0, 1}, 2, num_rows);
                     column_of_max_length = tmp_block2.safeGetByPosition(2);
-
-                    if constexpr (!execute_on_block)
-                        src_col.column.swap(columns[src_index]);
                 }
 
                 for (const auto & name : array_joined_columns)
                 {
                     auto src_index = index[name.second];
-                    auto & src_col = block.getByPosition(src_index);
-
-                    if constexpr (!execute_on_block)
-                        src_col.column.swap(columns[src_index]);
+                    auto src_col = container.getByPosition(src_index);
 
                     /// arrayResize(src_col, column_of_max_length)
                     Block tmp_block{src_col, column_of_max_length, {{}, src_col.type, {}}};
-                    function_arrayResize->build({src_col, column_of_max_length})->execute(tmp_block, {0, 1}, 2, rows);
-                    src_col.column = tmp_block.safeGetByPosition(2).column;
-
-                    if constexpr (!execute_on_block)
-                        src_col.column.swap(columns[src_index]);
+                    function_arrayResize->build({src_col, column_of_max_length})->execute(tmp_block, {0, 1}, 2, num_rows);
+                    container.getColumn(src_index) = tmp_block.safeGetByPosition(2).column;
                 }
             }
             else if (array_join_is_left)
@@ -543,30 +663,27 @@ void ExpressionAction::execute(
                 for (const auto & name : array_joined_columns)
                 {
                     auto src_index = index[name.second];
-                    auto & src_col = block.getByPosition(src_index);
+                    auto src_col = container.getByPosition(src_index);
 
-                    if constexpr (!execute_on_block)
-                        src_col.column.swap(columns[src_index]);
-
+                    /// array = emptyArrayToSingle(array)
                     Block tmp_block{src_col, {{}, src_col.type, {}}};
                     function_builder->build({src_col})->execute(tmp_block, {0}, 1, src_col.column->size(), dry_run);
                     src_col.column = tmp_block.safeGetByPosition(1).column;
 
-                    if constexpr (!execute_on_block)
-                        src_col.column.swap(columns[src_index]);
+                    container.getColumn(src_index) = src_col.column;
                 }
             }
 
-            ColumnPtr any_array_ptr = getColumn(index[array_joined_columns.begin()->second])->convertToFullColumnIfConst();
+            ColumnPtr any_array_ptr = container.getColumn(index[array_joined_columns.begin()->second])->convertToFullColumnIfConst();
             const auto * any_array = typeid_cast<const ColumnArray *>(&*any_array_ptr);
             if (!any_array)
                 throw Exception("ARRAY JOIN of not array: " + array_joined_columns.begin()->first, ErrorCodes::TYPE_MISMATCH);
 
-            size_t num_columns = block.columns();
+            size_t num_columns = container.getNumColumns();
             for (size_t i = 0; i < num_columns; ++i)
             {
-                ColumnWithTypeAndName & current = block.getByPosition(i);
-                auto & column = getColumn(i);
+                ColumnWithTypeAndName current = container.getByPosition(i);
+                auto & column = container.getColumn(i);
 
                 if (array_joined_columns.count(current.name))
                 {
@@ -580,9 +697,7 @@ void ExpressionAction::execute(
                         throw Exception("Sizes of ARRAY-JOIN-ed arrays do not match", ErrorCodes::SIZES_OF_ARRAYS_DOESNT_MATCH);
 
                     column = typeid_cast<const ColumnArray &>(*array_ptr).getDataPtr();
-
-                    if constexpr (execute_on_block)
-                        current.type = typeid_cast<const DataTypeArray &>(*current.type).getNestedType();
+                    container.setType(typeid_cast<const DataTypeArray &>(*current.type).getNestedType(), i);
                 }
                 else
                 {
@@ -598,56 +713,23 @@ void ExpressionAction::execute(
 
         case JOIN:
         {
-            Block header;
-
-            if constexpr (!execute_on_block)
-            {
-                header = block;
-
-                for (size_t i = 0; i < columns.size(); ++i)
-                    block.getByPosition(i).column.swap(columns[i]);
-            }
-
-            join->joinBlock(block, join_key_names_left, columns_added_by_join);
-
-            num_rows = block.rows();
-            index = makeIndex(block, enumerated_columns);
-
-            if constexpr (!execute_on_block)
-            {
-                columns.resize(block.columns());
-
-                for (size_t i = 0; i < columns.size(); ++i)
-                    block.getByPosition(i).column.swap(columns[i]);
-
-                block.swap(header);
-            }
+            num_rows = container.executeJoin(*join, join_key_names_left, columns_added_by_join, false);
+            index = makeIndex(container.getResultHeader(), enumerated_columns);
 
             break;
         }
 
         case PROJECT:
         {
-            Block new_block;
-            Columns new_columns;
+            auto data = container.detach();
             ColumnNumbers new_index(index.size(), INDEX_NOT_FOUND);
 
             for (size_t i = 0; i < projection_names.size(); ++i)
             {
                 const std::string & alias = projection_aliases[i];
-
                 auto pos = getIndex(projection_names[i]);
 
-                if constexpr (execute_on_block)
-                {
-                    ColumnWithTypeAndName column = block.getByPosition(pos);
-                    if (!alias.empty())
-                        column.name = alias;
-
-                    new_block.insert(std::move(column));
-                }
-                else
-                    new_columns.emplace_back(columns[pos]);
+                container.insertFrom(data, pos, alias);
 
                 if (alias.empty())
                 {
@@ -662,18 +744,13 @@ void ExpressionAction::execute(
             }
 
             index.swap(new_index);
-
-            if constexpr (execute_on_block)
-                block.swap(new_block);
-            else
-                columns.swap(new_columns);
-
             break;
         }
 
         case ADD_ALIASES:
         {
-            size_t num_columns = block.columns();
+            size_t num_columns = container.getNumColumns();
+            auto & data = container.getData();
 
             for (size_t i = 0; i < projection_names.size(); ++i)
             {
@@ -686,14 +763,7 @@ void ExpressionAction::execute(
                 index[projection_aliases[i].position] = num_columns;
                 ++num_columns;
 
-                if constexpr (execute_on_block)
-                {
-                    ColumnWithTypeAndName column = block.getByPosition(pos);
-                    column.name = alias;
-                    block.insert(std::move(column));
-                }
-                else
-                    columns.emplace_back(columns[pos]);
+                container.insertFrom(data, pos, alias);
             }
             break;
         }
@@ -701,12 +771,7 @@ void ExpressionAction::execute(
         case REMOVE_COLUMN:
         {
             auto pos = getIndex(source_name);
-
-            if constexpr (execute_on_block)
-                block.erase(pos);
-            else
-                columns.erase(columns.begin() + pos);
-
+            container.removeColumn(pos);
             index[source_name.position] = INDEX_NOT_FOUND;
 
             for (auto & val : index)
@@ -719,13 +784,9 @@ void ExpressionAction::execute(
         case ADD_COLUMN:
         {
             auto pos = result_name.position;
-            index[pos] = block.columns();
+            index[pos] = container.getNumColumns();
 
-            if constexpr (execute_on_block)
-                block.insert({ added_column->cloneResized(input_rows_count), result_type, result_name });
-            else
-                columns.emplace_back(added_column->cloneResized(input_rows_count));
-
+            container.insertColumn(added_column->cloneResized(num_rows), result_type, result_name);
             break;
         }
 
@@ -736,24 +797,13 @@ void ExpressionAction::execute(
 
             if (can_replace && dst_pos != INDEX_NOT_FOUND)
             {
-                if constexpr (execute_on_block)
-                {
-                    auto & dst_col = block.getByPosition(dst_pos);
-                    auto & src_col = block.getByPosition(src_pos);
-                    dst_col.column = src_col.column;
-                    dst_col.type = src_col.type;
-                }
-                else
-                    columns[dst_pos] = columns[src_pos];
+                container.getColumn(dst_pos) = container.getColumn(src_pos);
+                container.setType(result_type, dst_pos);
             }
             else
             {
-                index[result_name.position] = block.columns();
-
-                if constexpr (execute_on_block)
-                    block.insert({ block.getByPosition(src_pos).column, result_type, result_name });
-                else
-                    columns.emplace_back(columns[src_pos]);
+                container.insertColumn(container.getColumn(src_pos), result_type, result_name);
+                index[result_name.position] = container.getNumColumns();
             }
 
             break;
@@ -778,42 +828,21 @@ ColumnNumbers ExpressionAction::makeIndex(const Block & block, const EnumeratedC
 }
 
 
-template <bool execute_on_block>
+template <typename Container>
 void ExpressionAction::executeOnTotals(
-    Block & block,
-    Columns & columns,
+    Container & container,
     ColumnNumbers & index,
     const EnumeratedColumns & enumerated_columns) const
 {
     if (type != JOIN)
     {
         size_t num_rows = 1;
-        execute<execute_on_block>(block, columns, num_rows, index, enumerated_columns, false);
+        execute(container, num_rows, index, enumerated_columns, false);
     }
     else
     {
-        if constexpr (!execute_on_block)
-        {
-            for (size_t i = 0; i < columns.size(); ++i)
-                block.getByPosition(i).column.swap(columns[i]);
-        }
-
-        join->joinTotals(block);
-
-        if constexpr (!execute_on_block)
-        {
-            for (size_t i = 0; i < columns.size(); ++i)
-                block.getByPosition(i).column.swap(columns[i]);
-        }
-
-        index.assign(index.size(), INDEX_NOT_FOUND);
-        for (size_t i = 0, size = block.columns(); i < size; ++i)
-        {
-            const auto & column = block.getByPosition(i);
-            auto it = enumerated_columns.find(column.name);
-            if (it != enumerated_columns.end())
-                index[it->second] = i;
-        }
+        container.executeJoin(*join, join_key_names_left, columns_added_by_join, true);
+        index = makeIndex(container.getResultHeader(), enumerated_columns);
     }
 }
 
@@ -889,16 +918,10 @@ std::string ExpressionAction::toString() const
     return ss.str();
 }
 
-template <bool execute_on_block>
-void ExpressionActions::checkLimits(const Block & header, const Columns & columns) const
+template <typename Container>
+void ExpressionActions::checkLimits(Container & container) const
 {
-    auto getColumn = [&](size_t i) -> const ColumnPtr &
-    {
-        if constexpr (execute_on_block)
-            return header.getByPosition(i).column;
-        else
-            return columns[i];
-    };
+    const Block & header = container.getResultHeader();
 
     if (settings.max_temporary_columns && header.columns() > settings.max_temporary_columns)
         throw Exception("Too many temporary columns: " + header.dumpNames()
@@ -909,14 +932,14 @@ void ExpressionActions::checkLimits(const Block & header, const Columns & column
     {
         size_t non_const_columns = 0;
         for (size_t i = 0, size = header.columns(); i < size; ++i)
-            if (getColumn(i) && !isColumnConst(*getColumn(i)))
+            if (container.getColumn(i) && !isColumnConst(*container.getColumn(i)))
                 ++non_const_columns;
 
         if (non_const_columns > settings.max_temporary_non_const_columns)
         {
             std::stringstream list_of_non_const_columns;
             for (size_t i = 0, size = header.columns(); i < size; ++i)
-                if (getColumn(i) && !isColumnConst(*getColumn(i)))
+                if (container.getColumn(i) && !isColumnConst(*container.getColumn(i)))
                     list_of_non_const_columns << "\n" << header.safeGetByPosition(i).name;
 
             throw Exception("Too many temporary non-const columns:" + list_of_non_const_columns.str()
@@ -1045,10 +1068,12 @@ void ExpressionActions::execute(Block & block, bool dry_run) const
     size_t num_rows = block.rows();
     auto index = ExpressionAction::makeIndex(block, enumerated_columns);
 
+    ActionsOnBlock container(block);
+
     for (auto & action : actions)
     {
-        action.execute<true>(block, columns, num_rows, index, enumerated_columns, dry_run);
-        checkLimits<true>(block, columns);
+        action.execute(container, num_rows, index, enumerated_columns, dry_run);
+        checkLimits(container);
     }
 }
 
@@ -1067,10 +1092,12 @@ void ExpressionActions::execute(const Block & header, Columns & columns, size_t 
         /// Must copy because local index will be changed.
         cache.index = index;
 
+        ActionsOnBlock container(block);
+
         for (auto & action : actions)
         {
-            action.execute<true>(block, columns, num_rows, index, enumerated_columns, dry_run);
-            checkLimits<true>(block, columns);
+            action.execute(container, num_rows, index, enumerated_columns, dry_run);
+            checkLimits(container);
             cache.headers.emplace_back(block.cloneEmpty());
         }
 
@@ -1082,8 +1109,10 @@ void ExpressionActions::execute(const Block & header, Columns & columns, size_t 
 
         for (size_t i = 0, size = actions.size(); i < size; ++i)
         {
-            actions[i].execute<false>(cache.headers[i], columns, num_rows, index, enumerated_columns, dry_run);
-            checkLimits<false>(cache.headers[i + 1], columns);
+            ActionsOnColumns container(cache.headers[i], cache.headers[i + 1], columns);
+
+            actions[i].execute(container, num_rows, index, enumerated_columns, dry_run);
+            checkLimits(container);
         }
     }
 }
@@ -1124,10 +1153,12 @@ void ExpressionActions::executeOnTotals(Block & block) const
     Columns columns;
     auto index = ExpressionAction::makeIndex(block, enumerated_columns);
 
+    ActionsOnBlock container(block);
+
     for (auto & action : actions)
     {
-        action.executeOnTotals<true>(block, columns, index, enumerated_columns);
-        checkLimits<true>(block, columns);
+        action.executeOnTotals(container, index, enumerated_columns);
+        checkLimits(container);
     }
 }
 
@@ -1361,7 +1392,8 @@ void ExpressionActions::finalize(const Names & output_columns)
     std::cerr << "\n";*/
 
     optimizeArrayJoin();
-    checkLimits<true>(sample_block, {});
+    ActionsOnBlock container(sample_block);
+    checkLimits(container);
 }
 
 

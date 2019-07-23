@@ -152,12 +152,12 @@ private:
 
     void prepare(Block & sample_block, const Settings & settings);
 
-    template <bool execute_on_block>
-    void execute(Block & block, Columns & columns, size_t & num_rows,
+    template <typename Container>
+    void execute(Container & container, size_t & num_rows,
                  ColumnNumbers & index, const EnumeratedColumns & enumerated_columns, bool dry_run) const;
 
-    template <bool execute_on_block>
-    void executeOnTotals(Block & block, Columns & columns,
+    template <typename Container>
+    void executeOnTotals(Container & container,
                          ColumnNumbers & index, const EnumeratedColumns & enumerated_columns) const;
 
     /// Returns array which contains positions in block for each column from enumerated_columns (in enumerated order).
@@ -303,8 +303,8 @@ private:
     std::shared_ptr<CompiledExpressionCache> compilation_cache;
 #endif
 
-    template <bool execute_on_block>
-    void checkLimits(const Block & header, const Columns & columns) const;
+    template <typename Container>
+    void checkLimits(Container & container) const;
 
     void addImpl(ExpressionAction action, Names & new_names);
 
