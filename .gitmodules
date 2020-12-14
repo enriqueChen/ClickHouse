@@ -206,3 +206,6 @@
 	path = contrib/abseil-cpp
 	url = https://github.com/ClickHouse-Extras/abseil-cpp.git
 	branch = lts_2020_02_25
+[submodule "contrib/datasketch"]
+	path = contrib/datasketch
+	url = https://github.com/apache/incubator-datasketches-cpp.git
