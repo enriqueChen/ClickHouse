@@ -215,3 +215,6 @@
 [submodule "contrib/NuRaft"]
 	path = contrib/NuRaft
 	url = https://github.com/eBay/NuRaft.git
+[submodule "contrib/datasketch"]
+	path = contrib/datasketch
+	url = https://github.com/apache/incubator-datasketches-cpp.git

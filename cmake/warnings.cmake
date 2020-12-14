@@ -39,23 +39,25 @@ if (COMPILER_CLANG)
     add_warning(deprecated)
     add_warning(embedded-directive)
     add_warning(empty-init-stmt) # linux-only
-    add_warning(extra-semi-stmt) # linux-only
     add_warning(extra-semi)
     add_warning(gnu-case-range)
     add_warning(inconsistent-missing-destructor-override)
     add_warning(newline-eof)
-    add_warning(old-style-cast)
     add_warning(range-loop-analysis)
     add_warning(redundant-parens)
-    add_warning(reserved-id-macro)
     add_warning(shadow-field) # clang 8+
     add_warning(shadow-uncaptured-local)
-    add_warning(shadow)
     add_warning(string-plus-int) # clang 8+
     add_warning(undef)
     add_warning(unreachable-code-return)
     add_warning(unreachable-code)
-    add_warning(unused-exception-parameter)
+    if (NOT ENABLE_TUPLE_SKETCH)
+        add_warning(unused-exception-parameter)
+        add_warning(shadow)
+        add_warning(reserved-id-macro)
+        add_warning(extra-semi-stmt) # linux-only
+        add_warning(old-style-cast)
+    endif()
     add_warning(unused-macros)
     add_warning(unused-member-function)
     # XXX: libstdc++ has some of these for 3way compare
