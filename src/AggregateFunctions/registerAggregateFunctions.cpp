@@ -44,6 +44,7 @@ void registerAggregateFunctionRankCorrelation(AggregateFunctionFactory &);
 void registerAggregateFunctionMannWhitney(AggregateFunctionFactory &);
 void registerAggregateFunctionWelchTTest(AggregateFunctionFactory &);
 void registerAggregateFunctionStudentTTest(AggregateFunctionFactory &);
+void registerAggregateFunctionDataSketches(AggregateFunctionFactory &);
 
 class AggregateFunctionCombinatorFactory;
 void registerAggregateFunctionCombinatorIf(AggregateFunctionCombinatorFactory &);
@@ -85,6 +86,7 @@ void registerAggregateFunctions()
         registerAggregateFunctionUniqUpTo(factory);
         registerAggregateFunctionTopK(factory);
         registerAggregateFunctionsBitwise(factory);
+        registerAggregateFunctionDataSketches(factory);
 #if !defined(ARCADIA_BUILD)
         registerAggregateFunctionsBitmap(factory);
 #endif

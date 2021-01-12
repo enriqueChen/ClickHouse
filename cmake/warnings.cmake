@@ -51,13 +51,11 @@ if (COMPILER_CLANG)
     add_warning(undef)
     add_warning(unreachable-code-return)
     add_warning(unreachable-code)
-    if (NOT ENABLE_TUPLE_SKETCH)
-        add_warning(unused-exception-parameter)
-        add_warning(shadow)
-        add_warning(reserved-id-macro)
-        add_warning(extra-semi-stmt) # linux-only
-        add_warning(old-style-cast)
-    endif()
+    add_warning(unused-exception-parameter)
+    add_warning(shadow)
+    add_warning(reserved-id-macro)
+    add_warning(extra-semi-stmt) # linux-only
+    add_warning(old-style-cast)
     add_warning(unused-macros)
     add_warning(unused-member-function)
     # XXX: libstdc++ has some of these for 3way compare

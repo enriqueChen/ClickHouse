@@ -21,6 +21,9 @@ list(REMOVE_ITEM clickhouse_aggregate_functions_headers
     FactoryHelpers.h
 )
 
+include_directories (${SKETCH_COMMON_INCLUDE_DIR})
+include_directories (${SKETCH_THETA_INCLUDE_DIR})
+include_directories (${SKETCH_TUPLE_INCLUDE_DIR})
 add_library(clickhouse_aggregate_functions ${clickhouse_aggregate_functions_sources})
 target_link_libraries(clickhouse_aggregate_functions PRIVATE dbms PUBLIC ${CITYHASH_LIBRARIES})
 if(ENABLE_TESTS)
